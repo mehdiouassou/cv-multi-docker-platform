@@ -1,5 +1,6 @@
 import docker
 from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
 import time
@@ -8,6 +9,14 @@ import shutil
 import uuid
 
 app = FastAPI(title="Backend Orchestrator")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 try:
     client = docker.from_env()
