@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Play, Square, Plus, Server, Activity,
   Cpu, MemoryStick, AlertCircle, CheckCircle2,
-  Info, X
+  Info, X, Trash2, ExternalLink
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -142,14 +142,23 @@ export default function App() {
     return () => clearInterval(interval);
   }, [fetchContainers, fetchStats]);
 
-  const handleAction = async (id: string, action: 'start' | 'stop') => {
+  const handleAction = async (id: string, action: 'start' | 'stop' | 'delete') => {
     try {
       // Optimistic update
-      setContainers(prev => prev.map(c =>
-        c.id === id ? { ...c, status: action === 'start' ? 'starting' : 'stopping' } : c
-      ));
+      if (action !== 'delete') {
+        setContainers(prev => prev.map(c =>
+          c.id === id ? { ...c, status: action === 'start' ? 'starting' : 'stopping' } : c
+        ));
+      } else {
+        setContainers(prev => prev.map(c =>
+          c.id === id ? { ...c, status: 'deleting' } : c
+        ));
+      }
 
-      const res = await fetch(`${API_URL}/containers/${id}/${action}`, { method: 'POST' });
+      const method = action === 'delete' ? 'DELETE' : 'POST';
+      const url = action === 'delete' ? `${API_URL}/containers/${id}` : `${API_URL}/containers/${id}/${action}`;
+
+      const res = await fetch(url, { method });
       const data = await res.json();
 
       if (!res.ok) {
@@ -157,7 +166,7 @@ export default function App() {
       }
 
       addToast(
-        action === 'start' ? "Container Avviato" : "Container Arrestato",
+        action === 'start' ? "Container Avviato" : action === 'stop' ? "Container Arrestato" : "Container Eliminato",
         `Comando inviato con successo al container.`,
         "success"
       );
@@ -166,6 +175,16 @@ export default function App() {
       addToast("Errore di Esecuzione", err.message, "error");
       fetchContainers(); // Revert optimistic update
     }
+  };
+
+  const getExternalPort = (ports: any) => {
+    if (!ports) return null;
+    for (const key in ports) {
+      if (ports[key] && ports[key].length > 0) {
+        return ports[key][0].HostPort;
+      }
+    }
+    return null;
   };
 
   const handleCreateService = async (e: React.FormEvent) => {
@@ -273,7 +292,11 @@ export default function App() {
             <AnimatePresence>
               {containers.map((container) => {
                 const isRunning = container.status === 'running';
+                const isDeleting = container.status === 'deleting';
                 const cStats = stats[container.id];
+                const activePort = getExternalPort(container.ports);
+
+                if (isDeleting) return null;
 
                 return (
                   <motion.div
@@ -282,26 +305,39 @@ export default function App() {
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
                     key={container.id}
-                    className="group bg-slate-900/60 border border-slate-800 hover:border-slate-700 rounded-2xl p-6 transition-all backdrop-blur-sm"
+                    className="group bg-slate-900/60 border border-slate-800 hover:border-slate-700 rounded-2xl p-6 transition-all backdrop-blur-sm relative"
                   >
-                    <div className="flex justify-between items-start mb-6">
-                      <div>
-                        <div className="flex items-center gap-3 mb-2">
-                          <div className={cn("w-2.5 h-2.5 rounded-full shadow-[0_0_10px_currentColor]", isRunning ? "text-emerald-500 bg-emerald-500" : "text-rose-500 bg-rose-500")} />
-                          <h3 className="text-xl font-semibold text-white truncate max-w-[200px]">{container.name}</h3>
-                        </div>
-                        <p className="text-xs text-slate-500 font-mono">{container.image} • ID: {container.id}</p>
-                      </div>
-                      <div className="flex gap-2">
-                        {isRunning ? (
+                    <div className="absolute top-6 right-6 flex gap-2">
+                      {isRunning ? (
+                        <>
+                          {activePort && (
+                            <a href={`http://localhost:${activePort}/docs`} target="_blank" rel="noreferrer" className="p-2 bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 rounded-lg transition-colors flex items-center gap-1.5 px-3 font-medium text-sm" title="Apri Swagger UI CV">
+                              <ExternalLink className="w-4 h-4" /> API Docs
+                            </a>
+                          )}
                           <button onClick={() => handleAction(container.id, 'stop')} className="p-2 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 rounded-lg transition-colors" title="Ferma Container">
                             <Square className="w-4 h-4 fill-current" />
                           </button>
-                        ) : (
+                        </>
+                      ) : (
+                        <>
                           <button onClick={() => handleAction(container.id, 'start')} className="p-2 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 rounded-lg transition-colors" title="Avvia Container">
                             <Play className="w-4 h-4 fill-current" />
                           </button>
-                        )}
+                          <button onClick={() => handleAction(container.id, 'delete')} className="p-2 bg-slate-800 text-slate-400 hover:bg-rose-500/20 hover:text-rose-400 rounded-lg transition-colors" title="Elimina Container">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </>
+                      )}
+                    </div>
+
+                    <div className="flex justify-between items-start mb-6">
+                      <div className="pr-20">
+                        <div className="flex items-center gap-3 mb-2">
+                          <div className={cn("w-2.5 h-2.5 rounded-full shadow-[0_0_10px_currentColor]", isRunning ? "text-emerald-500 bg-emerald-500" : "text-slate-500 bg-slate-500")} />
+                          <h3 className="text-xl font-semibold text-white truncate max-w-[200px]" title={container.name}>{container.name}</h3>
+                        </div>
+                        <p className="text-xs text-slate-500 font-mono truncate max-w-[200px]">{container.image}</p>
                       </div>
                     </div>
 

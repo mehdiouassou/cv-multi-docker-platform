@@ -1,0 +1,7 @@
+service:
+  name: "CV_Template_Service"
+  version: "1.0.0"
+  description: "Template base per servizi di Computer Vision"
+model:
+  task: "classification" # può essere detection, segmentation, ecc.
+  input_size: [224, 224]

@@ -91,6 +91,20 @@ def stop_container(container_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.delete("/containers/{container_id}")
+def delete_container(container_id: str):
+    if not client:
+        raise HTTPException(status_code=503, detail="Docker client non disponibile")
+    try:
+        container = client.containers.get(container_id)
+        # Forza la rimozione anche se in esecuzione (-f)
+        container.remove(force=True)
+        return {"status": "deleted", "container_id": container_id}
+    except docker.errors.NotFound:
+        raise HTTPException(status_code=404, detail=f"Container {container_id} non trovato")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/containers/{container_id}/stats")
 def get_container_stats(container_id: str):
     if not client:
