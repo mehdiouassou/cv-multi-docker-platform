@@ -1,7 +1,0 @@
-service:
-  name: "TrashNet_Classifier"
-  version: "1.0.0"
-  description: "Servizio Computer Vision per classificare rifiuti riciclabili (TrashNet)"
-model:
-  task: "classification"
-  input_size: [224, 224]
