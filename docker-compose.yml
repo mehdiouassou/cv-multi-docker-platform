@@ -29,16 +29,18 @@ services:
   # Servizio di default istanziato all'avvio: il classificatore TrashNet
   trashnet_service_default:
     build:
-       context: ./cv_service_trashnet
+      context: ./cv_service_trashnet
     container_name: trashnet_service_default
     ports:
       - "8000:8000"
+    volumes:
+      - trashnet_data:/app/data
     restart: unless-stopped
 
   # Interfaccia opzionale Gradio per testing rapido
   gradio_ui:
     build:
-       context: ./gradio_ui
+      context: ./gradio_ui
     container_name: gradio_ui
     ports:
       - "7860:7860"
@@ -47,3 +49,6 @@ services:
     depends_on:
       - trashnet_service_default
     restart: unless-stopped
+
+volumes:
+  trashnet_data:
