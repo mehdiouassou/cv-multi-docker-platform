@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Play, Square, Plus, Server, Activity,
   Cpu, MemoryStick, AlertCircle, CheckCircle2,
-  Info, X, Trash2, ExternalLink
+  Info, X, Trash2, ExternalLink, TerminalSquare
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -85,6 +85,18 @@ export default function App() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
+  // In-flight actions to prevent flickering
+  const [inFlightActions, setInFlightActions] = useState<Set<string>>(new Set());
+
+  // Logs Modal
+  const [logsModalState, setLogsModalState] = useState({
+    isOpen: false,
+    containerId: '',
+    containerName: '',
+    logs: '',
+    isLoading: false
+  });
+
   // Modal Form State
   const [formParams, setFormParams] = useState({
     service_name: '',
@@ -144,6 +156,7 @@ export default function App() {
 
   const handleAction = async (id: string, action: 'start' | 'stop' | 'delete') => {
     try {
+      setInFlightActions(prev => new Set(prev).add(id));
       // Optimistic update
       if (action !== 'delete') {
         setContainers(prev => prev.map(c =>
@@ -170,10 +183,24 @@ export default function App() {
         `Comando inviato con successo al container.`,
         "success"
       );
-      fetchContainers();
+      await fetchContainers();
     } catch (err: any) {
       addToast("Errore di Esecuzione", err.message, "error");
-      fetchContainers(); // Revert optimistic update
+      await fetchContainers(); // Revert optimistic update
+    } finally {
+      setInFlightActions(prev => { const n = new Set(prev); n.delete(id); return n; });
+    }
+  };
+
+  const openLogs = async (id: string, name: string) => {
+    setLogsModalState({ isOpen: true, containerId: id, containerName: name, logs: '', isLoading: true });
+    try {
+      const res = await fetch(`${API_URL}/containers/${id}/logs`);
+      if (!res.ok) throw new Error("Errore nel caricamento dei log");
+      const data = await res.json();
+      setLogsModalState(prev => ({ ...prev, logs: data.logs, isLoading: false }));
+    } catch (err: any) {
+      setLogsModalState(prev => ({ ...prev, logs: err.message, isLoading: false }));
     }
   };
 
@@ -315,16 +342,22 @@ export default function App() {
                               <ExternalLink className="w-4 h-4" /> API Docs
                             </a>
                           )}
-                          <button onClick={() => handleAction(container.id, 'stop')} className="p-2 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 rounded-lg transition-colors" title="Ferma Container">
+                          <button disabled={inFlightActions.has(container.id)} onClick={() => openLogs(container.id, container.name)} className="p-2 bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white rounded-lg transition-colors" title="Vedi Log">
+                            <TerminalSquare className="w-4 h-4" />
+                          </button>
+                          <button disabled={inFlightActions.has(container.id)} onClick={() => handleAction(container.id, 'stop')} className="p-2 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors" title="Ferma Container">
                             <Square className="w-4 h-4 fill-current" />
                           </button>
                         </>
                       ) : (
                         <>
-                          <button onClick={() => handleAction(container.id, 'start')} className="p-2 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 rounded-lg transition-colors" title="Avvia Container">
+                          <button disabled={inFlightActions.has(container.id)} onClick={() => openLogs(container.id, container.name)} className="p-2 bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white rounded-lg transition-colors" title="Vedi Log">
+                            <TerminalSquare className="w-4 h-4" />
+                          </button>
+                          <button disabled={inFlightActions.has(container.id)} onClick={() => handleAction(container.id, 'start')} className="p-2 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors" title="Avvia Container">
                             <Play className="w-4 h-4 fill-current" />
                           </button>
-                          <button onClick={() => handleAction(container.id, 'delete')} className="p-2 bg-slate-800 text-slate-400 hover:bg-rose-500/20 hover:text-rose-400 rounded-lg transition-colors" title="Elimina Container">
+                          <button disabled={inFlightActions.has(container.id)} onClick={() => handleAction(container.id, 'delete')} className="p-2 bg-slate-800 text-slate-400 hover:bg-rose-500/20 hover:text-rose-400 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors" title="Elimina Container">
                             <Trash2 className="w-4 h-4" />
                           </button>
                         </>
@@ -439,6 +472,40 @@ export default function App() {
                   </button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Logs Modal */}
+      <AnimatePresence>
+        {logsModalState.isOpen && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setLogsModalState(prev => ({ ...prev, isOpen: false }))}
+              className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-4xl h-[70vh] flex flex-col relative z-10 shadow-2xl overflow-hidden"
+            >
+              <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950/50">
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <TerminalSquare className="w-5 h-5 text-indigo-400" /> Logs Console
+                  <span className="text-sm font-normal text-slate-400 ml-2">({logsModalState.containerName})</span>
+                </h3>
+                <button type="button" onClick={() => setLogsModalState(prev => ({ ...prev, isOpen: false }))} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+              </div>
+              <div className="p-4 flex-1 overflow-auto bg-[#0d1117]">
+                {logsModalState.isLoading ? (
+                  <div className="flex items-center justify-center h-full">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
+                  </div>
+                ) : (
+                  <pre className="text-sm font-mono text-emerald-400 whitespace-pre-wrap">{logsModalState.logs || "Nessun log disponibile in questo container."}</pre>
+                )}
+              </div>
             </motion.div>
           </div>
         )}

@@ -53,7 +53,14 @@ def list_containers():
     try:
         containers = client.containers.list(all=True)
         result = []
+        # Preveniamo la visualizzazione/gestione dei container core da UI
+        core_containers = ["backend_orchestrator", "frontend_web", "gradio_ui"]
+        
         for c in containers:
+            # Nascondiamo i container di sistema dalla dashboard per sicurezza
+            if any(core in c.name for core in core_containers):
+                continue
+                
             result.append({
                 "id": c.short_id,
                 "name": c.name,
@@ -97,8 +104,24 @@ def delete_container(container_id: str):
         raise HTTPException(status_code=503, detail="Docker client non disponibile")
     try:
         container = client.containers.get(container_id)
+        container_name = container.name
         # Forza la rimozione anche se in esecuzione (-f)
         container.remove(force=True)
+        
+        # Pulizia profonda: cerchiamo la cartella su host corrispondente al servizio e la rimuoviamo
+        instances_dir = os.path.join(SERVICES_BASE_DIR, "instances")
+        try:
+            if os.path.exists(instances_dir):
+                for folder in os.listdir(instances_dir):
+                    folder_path = os.path.join(instances_dir, folder)
+                    if os.path.isdir(folder_path):
+                        normalized = f"cv_{folder.lower().replace('-', '_')}"
+                        if container_name.startswith(normalized + "_"):
+                            shutil.rmtree(folder_path)
+                            break
+        except Exception as cleanup_err:
+            print(f"Errore durante l'eliminazione della cartella host: {cleanup_err}")
+
         return {"status": "deleted", "container_id": container_id}
     except docker.errors.NotFound:
         raise HTTPException(status_code=404, detail=f"Container {container_id} non trovato")
@@ -143,17 +166,37 @@ def get_container_stats(container_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/containers/{container_id}/logs")
+def get_container_logs(container_id: str, tail: int = 100):
+    if not client:
+        raise HTTPException(status_code=503, detail="Docker client non disponibile")
+    try:
+        container = client.containers.get(container_id)
+        # Preveniamo la visualizzazione dei log dei container core
+        core_containers = ["backend_orchestrator", "frontend_web", "gradio_ui"]
+        if any(core in container.name for core in core_containers):
+             raise HTTPException(status_code=403, detail="Azione vietata sui container di sistema")
+             
+        logs = container.logs(tail=tail, stdout=True, stderr=True).decode('utf-8', errors='replace')
+        return {"logs": logs}
+    except docker.errors.NotFound:
+        raise HTTPException(status_code=404, detail=f"Container {container_id} non trovato")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/services/create")
 def create_service(req: CreateServiceRequest, background_tasks: BackgroundTasks):
     if not client:
         raise HTTPException(status_code=503, detail="Docker client non connesso.")
         
     source_path = os.path.join(SERVICES_BASE_DIR, req.template_name)
-    target_path = os.path.join(SERVICES_BASE_DIR, req.service_name)
+    instances_dir = os.path.join(SERVICES_BASE_DIR, "instances")
+    os.makedirs(instances_dir, exist_ok=True)
+    target_path = os.path.join(instances_dir, req.service_name)
     
     if not os.path.exists(source_path):
         source_path = os.path.abspath(os.path.join("..", req.template_name))
-        target_path = os.path.abspath(os.path.join("..", req.service_name))
+        target_path = os.path.abspath(os.path.join("..", "instances", req.service_name))
         if not os.path.exists(source_path):
             raise HTTPException(status_code=400, detail=f"Template vuoto o mancante: {req.template_name}")
     

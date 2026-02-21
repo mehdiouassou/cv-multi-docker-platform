@@ -77,6 +77,8 @@ data/
 .DS_Store?
 ._*
 .Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
+
+# --- CV Symphony Dynamic Services ---
+# Tutti i servizi generati dinamicamente dal template andranno qui:
+instances/
