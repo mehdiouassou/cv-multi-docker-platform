@@ -53,7 +53,7 @@ docker compose down
 
 ## Architettura del sistema
 
-Il sistema e' composto da 5 servizi Docker che comunicano tra loro tramite la rete interna di Docker Compose:
+Il sistema e' composto da 4 servizi Docker che comunicano tra loro tramite la rete interna di Docker Compose:
 
 ```
                     +-------------------+
