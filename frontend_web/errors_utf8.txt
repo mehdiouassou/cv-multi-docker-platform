@@ -1,5 +1,0 @@
-src/App.tsx(4,17): error TS6133: 'Trash2' is declared but its value is never read.
-src/App.tsx(5,48): error TS6133: 'Clock' is declared but its value is never read.
-src/App.tsx(274,43): error TS6133: 'i' is declared but its value is never read.
-src/App.tsx(370,26): error TS2322: Type '{ require: true; type: "text"; className: string; placeholder: string; value: string; onChange: (e: ChangeEvent<HTMLInputElement>) => void; }' is not assignable to type 'DetailedHTMLProps<InputHTMLAttributes<HTMLInputElement>, HTMLInputElement>'.
-  Property 'require' does not exist on type 'DetailedHTMLProps<InputHTMLAttributes<HTMLInputElement>, HTMLInputElement>'. Did you mean 'required'?

@@ -8,7 +8,8 @@ from service.engine import CVEngine
 app = FastAPI(title="CV Service API")
 
 # Carica configurazione
-config_path = os.environ.get("CONFIG_PATH", "config.yaml")
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+config_path = os.environ.get("CONFIG_PATH", os.path.join(base_dir, "config.yaml"))
 try:
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
