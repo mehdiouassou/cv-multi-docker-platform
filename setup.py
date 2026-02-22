@@ -6,7 +6,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 setup(
     name="symphony-cv-platform",
     version="1.0.0",
-    author="Studente",
+    author="Mehdi Ouassou",
     description="Piattaforma Multi-Docker per Algoritmi di Computer Vision",
     long_description=long_description,
     long_description_content_type="text/markdown",

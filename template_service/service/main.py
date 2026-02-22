@@ -1,11 +1,10 @@
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 import yaml
 
 from service.engine import CVEngine
-
-app = FastAPI(title="CV Service API")
 
 # Carica configurazione
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -19,13 +18,15 @@ except Exception as e:
 
 engine = CVEngine(config)
 
+@asynccontextmanager
+async def lifespan(app):
+    engine.initialize()
+    yield
+
+app = FastAPI(title="CV Service API", lifespan=lifespan)
+
 class HealthResponse(BaseModel):
     status: str
-
-@app.on_event("startup")
-async def startup_event():
-    # Inizializza il modello o le risorse necessarie al boot
-    engine.initialize()
 
 @app.get("/health", response_model=HealthResponse)
 async def health_check():
@@ -72,7 +73,7 @@ async def train(params: TrainParams, background_tasks: BackgroundTasks):
     """
     Avvia il processo di training in background.
     """
-    job_id = engine.start_training(params.dict(), background_tasks)
+    job_id = engine.start_training(params.model_dump(), background_tasks)
     return {"job_id": job_id, "status": "started"}
 
 @app.get("/train/{job_id}")

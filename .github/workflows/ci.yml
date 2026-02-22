@@ -20,20 +20,29 @@ jobs:
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install flake8 pytest httpx fastapi uvicorn pydantic pyyaml docker torch torchvision datasets python-multipart
-        
+        pip install flake8 pytest pytest-html httpx fastapi uvicorn pydantic pyyaml docker torch torchvision datasets python-multipart
+
     - name: Run Tests
       run: |
-        PYTHONPATH=. pytest
+        mkdir -p reports
+        PYTHONPATH=. pytest --html=reports/test_report.html --self-contained-html --junitxml=reports/test_results.xml -v
 
     - name: Lint with flake8
       run: |
-        # Ferma la build se ci sono errori bloccanti di sintassi Python
+        mkdir -p reports
+        flake8 template_service cv_service_trashnet backend_orchestrator gradio_ui --count --select=E9,F63,F7,F82 --show-source --statistics --output-file=reports/flake8_report.txt || true
         flake8 template_service cv_service_trashnet backend_orchestrator gradio_ui --count --select=E9,F63,F7,F82 --show-source --statistics
 
     - name: Validate Docker Compose Configuration
       run: |
         docker compose config
+
+    - name: Upload Test and Lint Reports
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: test-and-lint-reports
+        path: reports/
 
   docker-build-and-push:
     needs: test-and-lint
@@ -42,7 +51,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    # LOGIN SU DOCKER HUB (necessari Secrets in GitHub repo!)
     - name: Log in to Docker Hub
       uses: docker/login-action@v3
       with:
@@ -63,9 +71,3 @@ jobs:
       run: |
         docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/cv-frontend-web:latest ./frontend_web
         docker push ${{ secrets.DOCKERHUB_USERNAME }}/cv-frontend-web:latest
-
-    - name: Build e Push Artefatto
-      uses: actions/upload-artifact@v4
-      with:
-        name: docker-compose-file
-        path: docker-compose.yml

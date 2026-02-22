@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   backend_orchestrator:
     build:
@@ -35,6 +33,8 @@ services:
       - "8000:8000"
     volumes:
       - trashnet_data:/app/data
+    mem_limit: 1536m
+    cpus: 1.0
     restart: unless-stopped
 
   # Interfaccia opzionale Gradio per testing rapido
