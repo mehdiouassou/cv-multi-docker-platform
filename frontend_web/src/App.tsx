@@ -4,7 +4,7 @@ import {
   Play, Square, Plus, Server, Activity,
   Cpu, MemoryStick, AlertCircle, CheckCircle2,
   Info, X, Trash2, ExternalLink, TerminalSquare,
-  RefreshCw, Upload, Clock, Globe, ImageIcon
+  RefreshCw, Upload, Clock, Globe, ImageIcon, RotateCcw
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -276,15 +276,16 @@ export default function App() {
     return () => clearInterval(interval);
   }, [fetchContainers, fetchStats]);
 
-  const handleAction = async (id: string, action: 'start' | 'stop' | 'delete') => {
+  const handleAction = async (id: string, action: 'start' | 'stop' | 'restart' | 'delete') => {
     try {
       setInFlightActions(prev => new Set(prev).add(id));
 
       if (action === 'delete') {
         setContainers(prev => prev.map(c => c.id === id ? { ...c, status: 'removing...' } : c));
       } else {
+        const statusMap: Record<string, string> = { start: 'starting...', stop: 'stopping...', restart: 'restarting...' };
         setContainers(prev => prev.map(c =>
-          c.id === id ? { ...c, status: action === 'start' ? 'starting...' : 'stopping...' } : c
+          c.id === id ? { ...c, status: statusMap[action] ?? action } : c
         ));
       }
 
@@ -294,7 +295,7 @@ export default function App() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || `Azione fallita: ${res.status}`);
 
-      const labels: Record<string, string> = { start: "Container Avviato", stop: "Container Arrestato", delete: "Container Eliminato" };
+      const labels: Record<string, string> = { start: "Container Avviato", stop: "Container Arrestato", restart: "Container Riavviato", delete: "Container Eliminato" };
       addToast(labels[action], "Comando eseguito con successo.", "success");
 
       setInFlightActions(prev => { const n = new Set(prev); n.delete(id); return n; });
@@ -509,6 +510,10 @@ export default function App() {
                         <button disabled={actionDisabled} onClick={() => openLogs(container.id, container.name)}
                           className="p-2 bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white rounded-lg transition-colors" title="Vedi Log">
                           <TerminalSquare className="w-4 h-4" />
+                        </button>
+                        <button disabled={actionDisabled} onClick={() => handleAction(container.id, 'restart')}
+                          className="p-2 bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors" title="Riavvia">
+                          <RotateCcw className="w-4 h-4" />
                         </button>
                         <button disabled={actionDisabled} onClick={() => handleAction(container.id, 'stop')}
                           className="p-2 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors" title="Ferma">

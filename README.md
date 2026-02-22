@@ -157,7 +157,7 @@ E' il cervello del sistema. Un'API FastAPI che comunica col Docker daemon per ge
 
 `GET /containers` elenca tutti i container Docker attivi sulla macchina, escludendo quelli di sistema. Per ogni container restituisce id, nome, stato (running/exited), immagine e porte.
 
-`POST /containers/{id}/start` e `POST /containers/{id}/stop` avviano o fermano un container specifico. Lo stop ha un timeout di 5 secondi.
+`POST /containers/{id}/start`, `POST /containers/{id}/stop` e `POST /containers/{id}/restart` avviano, fermano o riavviano un container specifico. Stop e restart hanno un timeout di 5 secondi prima del kill forzato.
 
 `DELETE /containers/{id}` rimuove un container (con force, anche se sta girando). Dopo la rimozione, cerca e cancella anche la cartella sorgente nella directory `instances/` se il servizio era stato creato da template.
 

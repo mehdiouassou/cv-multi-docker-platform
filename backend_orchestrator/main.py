@@ -137,6 +137,24 @@ def stop_container(container_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/containers/{container_id}/restart")
+def restart_container(container_id: str):
+    """
+    Riavvia un container (equivalente a stop + start in sequenza).
+    Timeout di 5 secondi prima del kill forzato durante lo stop.
+    """
+    if not client:
+        raise HTTPException(status_code=503, detail="Docker client non disponibile")
+    try:
+        container = client.containers.get(container_id)
+        container.restart(timeout=5)
+        return {"status": "restarted", "container_id": container_id}
+    except docker.errors.NotFound:
+        raise HTTPException(status_code=404, detail=f"Container {container_id} non trovato")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.delete("/containers/{container_id}")
 def delete_container(container_id: str):
     """

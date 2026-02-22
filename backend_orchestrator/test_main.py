@@ -33,6 +33,11 @@ def test_stop_container_no_docker():
     assert response.status_code in [404, 500, 503]
 
 
+def test_restart_container_no_docker():
+    response = client.post("/containers/fake_id/restart")
+    assert response.status_code in [404, 500, 503]
+
+
 def test_delete_container_no_docker():
     response = client.delete("/containers/fake_id")
     assert response.status_code in [404, 500, 503]
