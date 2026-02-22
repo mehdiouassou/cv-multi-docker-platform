@@ -272,15 +272,20 @@ def create_service(req: CreateServiceRequest, background_tasks: BackgroundTasks)
     # Cerca il template nella directory dei servizi
     source_path = os.path.join(SERVICES_BASE_DIR, req.template_name)
     instances_dir = os.path.join(SERVICES_BASE_DIR, "instances")
-    os.makedirs(instances_dir, exist_ok=True)
     target_path = os.path.join(instances_dir, req.service_name)
 
-    # Fallback: se il percorso non esiste, prova col path relativo
+    # Fallback: se il percorso non esiste, prova col path relativo.
+    # IMPORTANTE: la validazione del template avviene prima di makedirs,
+    # cosi in ambienti senza /projects (es. CI) si restituisce 400 correttamente.
     if not os.path.exists(source_path):
         source_path = os.path.abspath(os.path.join("..", req.template_name))
         target_path = os.path.abspath(os.path.join("..", "instances", req.service_name))
+        instances_dir = os.path.dirname(target_path)
         if not os.path.exists(source_path):
             raise HTTPException(status_code=400, detail=f"Template vuoto o mancante: {req.template_name}")
+
+    # Crea la directory instances/ solo dopo aver verificato che il template esiste
+    os.makedirs(instances_dir, exist_ok=True)
 
     # Controlla che non esista gia un servizio con lo stesso nome
     if os.path.exists(target_path):
