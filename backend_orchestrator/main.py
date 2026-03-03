@@ -14,11 +14,13 @@ Funzionalita principali:
 
 import docker
 import httpx
+import json
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional, List
+from datetime import datetime
 import time
 import os
 import shutil
@@ -75,6 +77,7 @@ def health_check():
 
 
 PLATFORM_LABEL = "symphony.managed"
+META_FILENAME = ".symphony_meta.json"
 
 @app.get("/containers")
 def list_containers():
@@ -113,7 +116,7 @@ def list_containers():
                 "id": c.short_id,
                 "name": c.name,
                 "status": c.status,
-                "image": c.image.tags[0] if c.image.tags else "unknown",
+                "image": (c.image.tags[0] if c.image and c.image.tags else c.attrs.get("Config", {}).get("Image", "unknown")),
                 "ports": c.ports
             })
         return result
@@ -285,30 +288,36 @@ def get_container_logs(container_id: str, tail: int = 100):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _resolve_instance_path(service_name: str):
+    """Risolve il percorso della cartella di un servizio in instances/."""
+    instances_dir = os.path.join(SERVICES_BASE_DIR, "instances")
+    target_path = os.path.join(instances_dir, service_name)
+    if os.path.exists(target_path):
+        return target_path, instances_dir
+    # Fallback path relativo
+    target_path = os.path.abspath(os.path.join("..", "instances", service_name))
+    instances_dir = os.path.dirname(target_path)
+    if os.path.exists(target_path):
+        return target_path, instances_dir
+    return None, None
+
+
 @app.post("/services/create")
-def create_service(req: CreateServiceRequest, background_tasks: BackgroundTasks):
+def create_service(req: CreateServiceRequest):
     """
-    Crea un nuovo servizio CV partendo dal template.
+    Step 1: copia il template in instances/{nome_servizio}.
 
-    Il processo:
-    1. Copia la cartella del template in instances/{nome_servizio}
-    2. Lancia in background il build dell'immagine Docker e l'avvio del container
-    3. La porta 8000 interna viene mappata su una porta casuale dell'host
-       (per evitare conflitti tra piu servizi)
-
-    La risposta arriva subito, il deploy continua in background.
+    NON builda ne avvia il container. L'utente deve prima modificare
+    algorithm.py, config.yaml e requirements.txt, poi chiamare
+    POST /services/{nome}/build per avviare il build.
     """
     if not client:
         raise HTTPException(status_code=503, detail="Docker client non connesso.")
 
-    # Cerca il template nella directory dei servizi
     source_path = os.path.join(SERVICES_BASE_DIR, req.template_name)
     instances_dir = os.path.join(SERVICES_BASE_DIR, "instances")
     target_path = os.path.join(instances_dir, req.service_name)
 
-    # Fallback: se il percorso non esiste, prova col path relativo.
-    # IMPORTANTE: la validazione del template avviene prima di makedirs,
-    # cosi in ambienti senza /projects (es. CI) si restituisce 400 correttamente.
     if not os.path.exists(source_path):
         source_path = os.path.abspath(os.path.join("..", req.template_name))
         target_path = os.path.abspath(os.path.join("..", "instances", req.service_name))
@@ -316,32 +325,148 @@ def create_service(req: CreateServiceRequest, background_tasks: BackgroundTasks)
         if not os.path.exists(source_path):
             raise HTTPException(status_code=400, detail=f"Template vuoto o mancante: {req.template_name}")
 
-    # Crea la directory instances/ solo dopo aver verificato che il template esiste
     os.makedirs(instances_dir, exist_ok=True)
 
-    # Controlla che non esista gia un servizio con lo stesso nome
     if os.path.exists(target_path):
         raise HTTPException(status_code=409, detail=f"Errore: Servizio '{req.service_name}' gia' esistente (directory occupata).")
 
-    # Controlla che non esista gia un container con nome simile
     normalized_name = f"cv_{req.service_name.lower().replace('-', '_')}"
     existing_containers = [c.name for c in client.containers.list(all=True)]
     if any(normalized_name in name for name in existing_containers):
         raise HTTPException(status_code=409, detail=f"Errore: Container basato su '{req.service_name}' gia' attivo/registrato.")
 
-    # Copia i file del template nella nuova cartella
     try:
         shutil.copytree(source_path, target_path)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Errore clonazione file di template: {e}")
 
-    # Il build e l'avvio avvengono in background per non bloccare la risposta HTTP
-    background_tasks.add_task(_build_and_run_container, target_path, req, normalized_name)
+    # Scrivi metadata per tracciare lo stato del servizio
+    meta = {
+        "service_name": req.service_name,
+        "template_name": req.template_name,
+        "cpu_cores": req.cpu_cores,
+        "mem_limit_mb": req.mem_limit_mb,
+        "status": "pending_setup",
+        "created_at": datetime.now().isoformat()
+    }
+    with open(os.path.join(target_path, META_FILENAME), "w") as f:
+        json.dump(meta, f, indent=2)
 
-    return {"status": "building", "service_name": req.service_name, "message": "Deploy asincrono in corso."}
+    return {
+        "status": "pending_setup",
+        "service_name": req.service_name,
+        "files_to_edit": [
+            f"instances/{req.service_name}/service/impl/algorithm.py",
+            f"instances/{req.service_name}/config.yaml",
+            f"instances/{req.service_name}/requirements.txt"
+        ],
+        "message": "Template copiato. Modifica i file e poi clicca Build & Deploy."
+    }
 
 
-def _build_and_run_container(path: str, req: CreateServiceRequest, base_name: str):
+@app.post("/services/{service_name}/build")
+def build_service(service_name: str, background_tasks: BackgroundTasks):
+    """
+    Step 2: builda l'immagine Docker e avvia il container.
+
+    Chiamato dopo che l'utente ha modificato i file del servizio.
+    Legge i parametri dal file .symphony_meta.json creato allo step 1.
+    """
+    if not client:
+        raise HTTPException(status_code=503, detail="Docker client non connesso.")
+
+    target_path, _ = _resolve_instance_path(service_name)
+    if not target_path:
+        raise HTTPException(status_code=404, detail=f"Servizio '{service_name}' non trovato.")
+
+    meta_path = os.path.join(target_path, META_FILENAME)
+    if not os.path.exists(meta_path):
+        raise HTTPException(status_code=400, detail="File metadata mancante.")
+
+    with open(meta_path) as f:
+        meta = json.load(f)
+
+    if meta["status"] not in ("pending_setup", "build_failed"):
+        raise HTTPException(status_code=409, detail=f"Servizio in stato '{meta['status']}', non buildabile.")
+
+    meta["status"] = "building"
+    meta.pop("error", None)
+    with open(meta_path, "w") as f:
+        json.dump(meta, f, indent=2)
+
+    normalized_name = f"cv_{service_name.lower().replace('-', '_')}"
+    req = CreateServiceRequest(
+        service_name=meta["service_name"],
+        template_name=meta["template_name"],
+        cpu_cores=meta["cpu_cores"],
+        mem_limit_mb=meta["mem_limit_mb"]
+    )
+
+    background_tasks.add_task(_build_and_run_container, target_path, req, normalized_name, meta_path)
+    return {"status": "building", "service_name": service_name, "message": "Build avviato."}
+
+
+@app.get("/services/pending")
+def list_pending_services():
+    """Elenca i servizi creati ma non ancora deployati (in attesa di setup o build)."""
+    results = []
+    for base in [os.path.join(SERVICES_BASE_DIR, "instances"),
+                 os.path.abspath(os.path.join("..", "instances"))]:
+        if not os.path.exists(base):
+            continue
+        for folder in os.listdir(base):
+            folder_path = os.path.join(base, folder)
+            meta_path = os.path.join(folder_path, META_FILENAME)
+            if not os.path.isdir(folder_path) or not os.path.exists(meta_path):
+                continue
+            try:
+                with open(meta_path) as f:
+                    meta = json.load(f)
+                if meta.get("status") in ("pending_setup", "building", "build_failed"):
+                    results.append({
+                        "service_name": meta["service_name"],
+                        "status": meta["status"],
+                        "created_at": meta.get("created_at"),
+                        "cpu_cores": meta.get("cpu_cores", 1.0),
+                        "mem_limit_mb": meta.get("mem_limit_mb", 512),
+                        "error": meta.get("error"),
+                        "files_to_edit": [
+                            f"instances/{folder}/service/impl/algorithm.py",
+                            f"instances/{folder}/config.yaml",
+                            f"instances/{folder}/requirements.txt"
+                        ]
+                    })
+            except (json.JSONDecodeError, KeyError):
+                continue
+        break  # Usa solo il primo path valido
+    return results
+
+
+@app.delete("/services/{service_name}")
+def delete_pending_service(service_name: str):
+    """Elimina un servizio non ancora deployato (rimuove la cartella da instances/)."""
+    target_path, _ = _resolve_instance_path(service_name)
+    if not target_path:
+        raise HTTPException(status_code=404, detail=f"Servizio '{service_name}' non trovato.")
+    shutil.rmtree(target_path)
+    return {"status": "deleted", "service_name": service_name}
+
+
+def _update_meta(meta_path: str, updates: dict):
+    """Aggiorna i campi nel file .symphony_meta.json."""
+    if not meta_path or not os.path.exists(meta_path):
+        return
+    try:
+        with open(meta_path) as f:
+            meta = json.load(f)
+        meta.update(updates)
+        with open(meta_path, "w") as f:
+            json.dump(meta, f, indent=2)
+    except Exception:
+        pass
+
+
+def _build_and_run_container(path: str, req: CreateServiceRequest, base_name: str, meta_path: str = None):
     """
     Task in background: builda l'immagine Docker e avvia il container.
 
@@ -349,6 +474,7 @@ def _build_and_run_container(path: str, req: CreateServiceRequest, base_name: st
     - Il container ha un nome univoco con suffisso UUID per evitare collisioni
     - CPU e RAM sono limitati secondo i parametri della richiesta
     - La porta 8000 viene mappata automaticamente su una porta libera dell'host
+    - Se meta_path e' fornito, aggiorna lo stato nel file metadata
     """
     if not client:
         return
@@ -358,9 +484,8 @@ def _build_and_run_container(path: str, req: CreateServiceRequest, base_name: st
         client.images.build(path=path, tag=image_name, rm=True)
 
         mem_str = f"{req.mem_limit_mb}m"
-        port_binding = {8000: None}  # None = Docker sceglie una porta host libera
+        port_binding = {8000: None}
 
-        # Nome univoco: cv_nomeservizio_abc123
         container_name = f"{base_name}_{uuid.uuid4().hex[:6]}"
 
         client.containers.run(
@@ -368,14 +493,17 @@ def _build_and_run_container(path: str, req: CreateServiceRequest, base_name: st
             name=container_name,
             detach=True,
             mem_limit=mem_str,
-            nano_cpus=int(req.cpu_cores * 1e9),  # Docker vuole i nanocpu (1 core = 1e9)
+            nano_cpus=int(req.cpu_cores * 1e9),
             ports=port_binding,
             labels={PLATFORM_LABEL: "true"}
         )
+        _update_meta(meta_path, {"status": "deployed"})
     except docker.errors.APIError as e:
         print(f"Docker API Error per {req.service_name}: {e}")
+        _update_meta(meta_path, {"status": "build_failed", "error": str(e)})
     except Exception as e:
         print(f"Errore imprevisto nel task background: {e}")
+        _update_meta(meta_path, {"status": "build_failed", "error": str(e)})
 
 
 def _get_container_internal_url(container_id: str) -> str:

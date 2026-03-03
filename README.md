@@ -165,12 +165,23 @@ E' il cervello del sistema. Un'API FastAPI che comunica col Docker daemon per ge
 
 `GET /containers/{id}/logs?tail=100` restituisce le ultime N righe di log (stdout + stderr) del container. I container di sistema restituiscono 403.
 
-`POST /services/create` crea un nuovo servizio da template. Il processo:
+`POST /services/create` crea un nuovo servizio da template. Il flusso e' diviso in 2 step per permettere la personalizzazione prima del deploy:
+
+**Step 1 - Crea Template** (`POST /services/create`):
 1. Copia la cartella `template_service` in `instances/{nome_servizio}`
-2. Builda l'immagine Docker dalla cartella copiata
-3. Avvia il container con i limiti di CPU e RAM specificati
-4. La porta 8000 del container viene mappata su una porta casuale dell'host (per evitare conflitti)
-5. Il build e l'avvio avvengono in un BackgroundTask di FastAPI, quindi la risposta arriva subito e il deploy continua in background
+2. Scrive un file `.symphony_meta.json` con lo stato `pending_setup`
+3. Ritorna i path dei file da modificare (`algorithm.py`, `config.yaml`, `requirements.txt`)
+
+**Step 2 - Build & Deploy** (`POST /services/{nome}/build`):
+1. Builda l'immagine Docker dalla cartella del servizio
+2. Avvia il container con i limiti di CPU e RAM specificati
+3. La porta 8000 del container viene mappata su una porta casuale dell'host (per evitare conflitti)
+4. Il build avviene in un BackgroundTask di FastAPI, quindi la risposta arriva subito e il deploy continua in background
+5. Se il build fallisce, l'errore viene salvato nel metadata e l'utente puo' ritentare dopo aver corretto il problema
+
+`GET /services/pending` elenca i servizi creati ma non ancora deployati (in attesa di setup, in build, o con build fallito).
+
+`DELETE /services/{nome}` rimuove un servizio non ancora deployato (elimina la cartella da instances/).
 
 ### 2. Servizio CV TrashNet (`cv_service_trashnet/`)
 
@@ -201,7 +212,7 @@ Servizio di classificazione rifiuti. Prende un'immagine in input e restituisce l
 
 ### 3. Template Service (`template_service/`)
 
-Ha la stessa struttura del servizio TrashNet, ma l'algoritmo e' un placeholder. Quando l'utente crea un nuovo servizio dalla dashboard, il backend copia questa cartella, builda l'immagine Docker e avvia il container. Per implementare un nuovo algoritmo basta modificare `service/impl/algorithm.py` nella copia.
+Ha la stessa struttura del servizio TrashNet, ma l'algoritmo e' un placeholder. Quando l'utente crea un nuovo servizio dalla dashboard, il backend copia questa cartella in `instances/`. Il servizio appare nella sezione "In Attesa di Setup" con i path dei file da modificare. L'utente personalizza `algorithm.py`, `config.yaml` e `requirements.txt`, poi clicca "Build & Deploy" dalla dashboard per costruire e avviare il container.
 
 ### 4. Frontend Web (`frontend_web/`)
 
@@ -216,7 +227,7 @@ Single Page Application scritta in React 18 con TypeScript. Compilata con Vite e
 **Come funziona la dashboard:**
 - Al mount, parte un `setInterval` che ogni 3 secondi chiama `GET /containers` e `GET /containers/{id}/stats` per ogni container running
 - Le azioni (start, stop, delete) usano optimistic updates: aggiornano la UI immediatamente e poi confermano col server. Se il server risponde con errore, l'UI torna allo stato precedente
-- La creazione di un nuovo servizio apre un modale con form per nome, CPU e RAM. Il submit chiama `POST /services/create`
+- La creazione di un nuovo servizio avviene in 2 step: prima si crea il template (modale con nome, CPU, RAM), poi dopo aver modificato i file si clicca "Build & Deploy" dalla sezione "In Attesa di Setup"
 - I log si vedono in un modale con sfondo scuro stile terminale
 - Le notifiche toast appaiono in basso a destra e scompaiono dopo 5 secondi
 

@@ -4,7 +4,8 @@ import {
   Play, Square, Plus, Server, Activity,
   Cpu, MemoryStick, AlertCircle, CheckCircle2,
   Info, X, Trash2, ExternalLink, TerminalSquare,
-  RefreshCw, Upload, Clock, Globe, ImageIcon, RotateCcw
+  RefreshCw, Upload, Clock, Globe, ImageIcon, RotateCcw,
+  FileCode2, Rocket, Loader2
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -56,6 +57,14 @@ interface ToastMessage {
   title: string;
   description: string;
   type: 'success' | 'error' | 'info';
+}
+
+interface PendingService {
+  service_name: string;
+  status: 'pending_setup' | 'building' | 'build_failed';
+  created_at: string;
+  error?: string;
+  files_to_edit: string[];
 }
 
 // Calcola uptime leggibile da una data ISO
@@ -137,6 +146,7 @@ export default function App() {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [pendingServices, setPendingServices] = useState<PendingService[]>([]);
 
   const [inFlightActions, setInFlightActions] = useState<Set<string>>(new Set());
 
@@ -265,16 +275,30 @@ export default function App() {
     setServiceInfoMap(prev => ({ ...prev, ...newInfo }));
   }, []);
 
+  // Fetch servizi in attesa di setup / build
+  const fetchPendingServices = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_URL}/services/pending`);
+      if (!res.ok) return;
+      const data: PendingService[] = await res.json();
+      setPendingServices(data);
+    } catch {
+      // silenzioso: il polling riprova
+    }
+  }, []);
+
   // Polling stabile
   useEffect(() => {
     fetchContainers();
     fetchStats();
+    fetchPendingServices();
     const interval = setInterval(() => {
       fetchContainers();
       fetchStats();
+      fetchPendingServices();
     }, POLL_INTERVAL);
     return () => clearInterval(interval);
-  }, [fetchContainers, fetchStats]);
+  }, [fetchContainers, fetchStats, fetchPendingServices]);
 
   const handleAction = async (id: string, action: 'start' | 'stop' | 'restart' | 'delete') => {
     try {
@@ -372,20 +396,38 @@ export default function App() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "Creazione fallita");
 
-      addToast("Deploy Iniziato", `Servizio '${formParams.service_name}' in costruzione asincrona.`, "success");
+      addToast("Template Creato", `Modifica i file di '${formParams.service_name}' e poi clicca Build & Deploy.`, "success");
       setIsModalOpen(false);
       setFormParams(prev => ({ ...prev, service_name: '' }));
-
-      let checks = 0;
-      const fastPoll = setInterval(async () => {
-        await fetchContainers();
-        checks++;
-        if (checks >= 10) clearInterval(fastPoll);
-      }, 3000);
+      await fetchPendingServices();
     } catch (err: any) {
-      addToast("Deploy Fallito", err.message, "error");
+      addToast("Creazione Fallita", err.message, "error");
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleBuildService = async (serviceName: string) => {
+    try {
+      const res = await fetch(`${API_URL}/services/${serviceName}/build`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Build fallito");
+      addToast("Build Avviato", `Build di '${serviceName}' in corso...`, "info");
+      await fetchPendingServices();
+    } catch (err: any) {
+      addToast("Errore Build", err.message, "error");
+    }
+  };
+
+  const handleDeletePendingService = async (serviceName: string) => {
+    try {
+      const res = await fetch(`${API_URL}/services/${serviceName}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Eliminazione fallita");
+      addToast("Servizio Eliminato", `'${serviceName}' rimosso.`, "success");
+      await fetchPendingServices();
+    } catch (err: any) {
+      addToast("Errore", err.message, "error");
     }
   };
 
@@ -460,6 +502,95 @@ export default function App() {
             </div>
           ))}
         </div>
+
+        {/* Pending Services */}
+        {pendingServices.length > 0 && (
+          <div className="mb-10">
+            <h2 className="text-lg font-semibold text-slate-200 mb-6 flex items-center gap-2">
+              <FileCode2 className="w-5 h-5 text-amber-400" /> Servizi in Attesa di Setup
+            </h2>
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              {pendingServices.map((svc) => {
+                const isBuilding = svc.status === 'building';
+                const isFailed = svc.status === 'build_failed';
+                return (
+                  <div key={svc.service_name}
+                    className={cn(
+                      "bg-slate-900/60 border rounded-2xl p-6 backdrop-blur-sm",
+                      isFailed ? "border-rose-500/40" : "border-amber-500/40"
+                    )}>
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        <div className={cn(
+                          "w-2.5 h-2.5 rounded-full",
+                          isBuilding ? "bg-amber-500 animate-pulse shadow-[0_0_8px_theme(colors.amber.500)]" :
+                          isFailed ? "bg-rose-500 shadow-[0_0_8px_theme(colors.rose.500)]" :
+                          "bg-indigo-500 shadow-[0_0_8px_theme(colors.indigo.500)]"
+                        )} />
+                        <h3 className="text-lg font-semibold text-white">{svc.service_name}</h3>
+                        <span className={cn(
+                          "text-xs px-2 py-0.5 rounded-full font-medium",
+                          isBuilding ? "bg-amber-500/10 text-amber-400" :
+                          isFailed ? "bg-rose-500/10 text-rose-400" :
+                          "bg-indigo-500/10 text-indigo-400"
+                        )}>
+                          {isBuilding ? 'building...' : isFailed ? 'build fallito' : 'da configurare'}
+                        </span>
+                      </div>
+                      <button onClick={() => handleDeletePendingService(svc.service_name)}
+                        className="p-2 bg-slate-800 text-slate-400 hover:bg-rose-500/20 hover:text-rose-400 rounded-lg transition-colors" title="Elimina">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {/* Files da modificare */}
+                    {svc.status === 'pending_setup' && (
+                      <div className="mb-4 p-4 bg-slate-950/50 rounded-xl border border-slate-800/50">
+                        <p className="text-sm text-slate-300 mb-2">Modifica questi file prima di buildare:</p>
+                        <ul className="space-y-1">
+                          {svc.files_to_edit.map((f) => (
+                            <li key={f} className="text-xs font-mono text-indigo-400 flex items-center gap-2">
+                              <FileCode2 className="w-3.5 h-3.5 flex-shrink-0" />
+                              {f}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Errore build */}
+                    {isFailed && svc.error && (
+                      <div className="mb-4 p-3 bg-rose-500/10 border border-rose-500/20 rounded-xl">
+                        <p className="text-xs text-rose-400 font-mono break-all">{svc.error}</p>
+                      </div>
+                    )}
+
+                    {/* Build button */}
+                    <button
+                      onClick={() => handleBuildService(svc.service_name)}
+                      disabled={isBuilding}
+                      className={cn(
+                        "w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-medium transition-all",
+                        isBuilding
+                          ? "bg-amber-500/20 text-amber-400 cursor-not-allowed"
+                          : isFailed
+                            ? "bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-500/20"
+                            : "bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-500/20"
+                      )}>
+                      {isBuilding ? (
+                        <><Loader2 className="w-4 h-4 animate-spin" /> Build in corso...</>
+                      ) : isFailed ? (
+                        <><RotateCcw className="w-4 h-4" /> Riprova Build</>
+                      ) : (
+                        <><Rocket className="w-4 h-4" /> Build &amp; Deploy</>
+                      )}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Containers */}
         <h2 className="text-lg font-semibold text-slate-200 mb-6 flex items-center gap-2">
@@ -739,7 +870,7 @@ export default function App() {
                   </button>
                   <button type="submit" disabled={isSubmitting}
                     className="flex-1 px-4 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-600/50 disabled:cursor-not-allowed text-white rounded-xl font-medium transition-colors shadow-lg shadow-indigo-500/20 flex justify-center items-center">
-                    {isSubmitting ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : "Deploy"}
+                    {isSubmitting ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : "Crea Template"}
                   </button>
                 </div>
               </form>
