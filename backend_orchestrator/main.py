@@ -74,14 +74,17 @@ def health_check():
     return {"status": "ok", "docker_connected": client is not None}
 
 
+PLATFORM_LABEL = "symphony.managed"
+
 @app.get("/containers")
 def list_containers():
     """
-    Elenca tutti i container Docker sulla macchina, escludendo quelli di sistema.
+    Elenca solo i container gestiti dalla piattaforma Symphony.
 
-    I container core (backend_orchestrator, frontend_web, gradio_ui) vengono
-    nascosti dalla lista per evitare che l'utente li fermi o elimini dalla dashboard,
-    il che spegnerebbe il sistema stesso.
+    Il filtro funziona in due modi:
+    - I container creati via /services/create hanno il label symphony.managed=true
+    - Il container trashnet di default (da docker-compose) viene riconosciuto per nome
+    I container di sistema (backend, frontend, gradio) sono sempre esclusi.
     """
     if not client:
         raise HTTPException(status_code=503, detail="Docker client non disponibile")
@@ -93,6 +96,17 @@ def list_containers():
 
         for c in containers:
             if any(core in c.name for core in core_containers):
+                continue
+
+            # Mostra solo i container della piattaforma:
+            # 1) quelli con il label symphony.managed (creati da template)
+            # 2) quelli il cui nome contiene "trashnet" (servizio di default)
+            # 3) quelli il cui nome inizia con "cv_" (convenzione della piattaforma)
+            is_managed = c.labels.get(PLATFORM_LABEL) == "true"
+            is_trashnet = "trashnet" in c.name
+            is_cv_service = c.name.startswith("cv_")
+
+            if not (is_managed or is_trashnet or is_cv_service):
                 continue
 
             result.append({
@@ -355,7 +369,8 @@ def _build_and_run_container(path: str, req: CreateServiceRequest, base_name: st
             detach=True,
             mem_limit=mem_str,
             nano_cpus=int(req.cpu_cores * 1e9),  # Docker vuole i nanocpu (1 core = 1e9)
-            ports=port_binding
+            ports=port_binding,
+            labels={PLATFORM_LABEL: "true"}
         )
     except docker.errors.APIError as e:
         print(f"Docker API Error per {req.service_name}: {e}")

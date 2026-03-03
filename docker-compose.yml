@@ -24,7 +24,9 @@ services:
       - backend_orchestrator
     restart: unless-stopped
 
-  # Servizio di default istanziato all'avvio: il classificatore TrashNet
+  # Servizio di default istanziato all'avvio: il classificatore TrashNet.
+  # La porta 8000 e' fissa per comodita d'uso; se risulta occupata
+  # eseguire "docker compose down" prima di rilanciare.
   trashnet_service_default:
     build:
       context: ./cv_service_trashnet
@@ -33,6 +35,8 @@ services:
       - "8000:8000"
     volumes:
       - trashnet_data:/app/data
+    labels:
+      symphony.managed: "true"
     mem_limit: 1536m
     cpus: 1.0
     restart: unless-stopped
