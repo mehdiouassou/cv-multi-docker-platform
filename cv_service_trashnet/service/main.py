@@ -83,6 +83,8 @@ async def inference(file: UploadFile = File(...)):
         image_bytes = await file.read()
         result = engine.predict(image_bytes)
         return result
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -103,8 +105,11 @@ async def train(params: TrainParams, background_tasks: BackgroundTasks):
     Non blocca la risposta HTTP: restituisce subito un job_id che il client
     puo usare per controllare lo stato del training con GET /train/{job_id}.
     """
-    job_id = engine.start_training(params.model_dump(), background_tasks)
-    return {"job_id": job_id, "status": "started"}
+    try:
+        job_id = engine.start_training(params.model_dump(), background_tasks)
+        return {"job_id": job_id, "status": "started"}
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
 
 
 @app.get("/train/{job_id}")

@@ -139,10 +139,16 @@ class BaseAlgorithm:
         lr = params.get("learning_rate", 0.001)
         batch_size = params.get("batch_size", 16)
 
-        # Scarica un subset del dataset da HuggingFace (10% per velocita)
+        # Scarica il dataset da HuggingFace e campiona un subset casuale (10%)
+        # per evitare bias: train[:10%] prende i primi record e puo contenere
+        # solo poche classi (es. cardboard/glass).
         try:
-            print("Caricamento dataset TrashNet (subset train 10%)...")
-            dataset = load_dataset("garythung/trashnet", split="train[:10%]")
+            print("Caricamento dataset TrashNet...")
+            dataset = load_dataset("garythung/trashnet", split="train")
+            total_samples = len(dataset)
+            subset_size = max(1, int(total_samples * 0.10))
+            dataset = dataset.shuffle(seed=42).select(range(subset_size))
+            print(f"Subset casuale caricato: {subset_size}/{total_samples} campioni")
         except Exception as e:
             return {"error": f"Errore caricamento dataset: {str(e)}"}
 

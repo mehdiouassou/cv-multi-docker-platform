@@ -12,6 +12,7 @@ Responsabilita:
 
 import uuid
 import time
+import threading
 from service.impl.algorithm import BaseAlgorithm
 
 
@@ -23,6 +24,8 @@ class CVEngine:
         # Dizionario che tiene traccia di tutti i job di training lanciati.
         # Chiave: job_id (UUID), Valore: dict con status, progress, metrics
         self.training_jobs = {}
+        self.active_training_job_id = None
+        self._state_lock = threading.Lock()
 
     def initialize(self):
         """Carica il modello in memoria. Chiamato una volta sola all'avvio del container."""
@@ -46,6 +49,8 @@ class CVEngine:
         """
         if not self.ready:
             raise Exception("Engine non inizializzato")
+        if self.is_training_running():
+            raise RuntimeError("Training in corso. Riprova a training completato")
 
         start_time = time.time()
         prediction, confidence = self.algorithm.run_inference(image_bytes)
@@ -65,12 +70,21 @@ class CVEngine:
         come BackgroundTask di FastAPI. Restituisce il job_id al chiamante
         che puo usarlo per controllare lo stato con get_training_status().
         """
-        job_id = str(uuid.uuid4())
-        self.training_jobs[job_id] = {
-            "status": "running",
-            "progress": 0.0,
-            "metrics": {}
-        }
+        with self._state_lock:
+            if self.active_training_job_id:
+                active = self.training_jobs.get(self.active_training_job_id)
+                if active and active.get("status") == "running":
+                    raise RuntimeError(
+                        f"Training gia in corso (job_id={self.active_training_job_id})"
+                    )
+
+            job_id = str(uuid.uuid4())
+            self.training_jobs[job_id] = {
+                "status": "running",
+                "progress": 0.0,
+                "metrics": {}
+            }
+            self.active_training_job_id = job_id
 
         background_tasks.add_task(self._training_task, job_id, params)
         return job_id
@@ -93,6 +107,18 @@ class CVEngine:
         except Exception as e:
             self.training_jobs[job_id]["status"] = "failed"
             self.training_jobs[job_id]["error"] = str(e)
+        finally:
+            with self._state_lock:
+                if self.active_training_job_id == job_id:
+                    self.active_training_job_id = None
+
+    def is_training_running(self):
+        """Ritorna True se esiste un job di training attivo in esecuzione."""
+        with self._state_lock:
+            if not self.active_training_job_id:
+                return False
+            job = self.training_jobs.get(self.active_training_job_id)
+            return bool(job and job.get("status") == "running")
 
     def get_training_status(self, job_id):
         """Restituisce lo stato di un job di training, o None se non esiste."""
